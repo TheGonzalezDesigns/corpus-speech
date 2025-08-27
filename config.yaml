@@ -1,9 +1,19 @@
 speech:
-  engine: "pyttsx3"  # or "espeak", "festival"
+  engine: "hume"     # "pyttsx3" (legacy), "hume" (new)
   voice:
-    rate: 200        # Words per minute
-    volume: 0.9      # 0.0 to 1.0
-    voice_id: null   # null for default, or specific voice ID
+    rate: 200        # Words per minute (for pyttsx3)
+    volume: 0.9      # 0.0 to 1.0 (for pyttsx3)
+    voice_id: "ito"  # For hume: voice name, for pyttsx3: voice ID
+  
+hume:
+  api_key: null      # Set via environment variable HUME_API_KEY
+  base_url: "https://api.hume.ai/v0"
+  tts:
+    format: "mp3"    # mp3, wav, pcm
+    instant_mode: true
+    num_generations: 1
+    speed: 1.0       # Speech speed multiplier
+    voice_description: null  # Optional: describe voice characteristics
   
 audio:
   device: "default"  # Audio output device

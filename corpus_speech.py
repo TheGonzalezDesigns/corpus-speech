@@ -1,13 +1,19 @@
-import pyttsx3
+import os
 import yaml
 import logging
+import base64
+import io
+import pygame
+import requests
 from typing import Optional, Dict, Any
+from hume.client import HumeClient
 
 class TextToSpeech:
     def __init__(self, config_path: str = "config.yaml"):
         self.config = self._load_config(config_path)
-        self.engine = None
-        self._initialize_engine()
+        self.pyttsx3_engine = None
+        self.hume_client = None
+        self._initialize_engines()
         
     def _load_config(self, config_path: str) -> Dict[str, Any]:
         try:
@@ -20,85 +26,243 @@ class TextToSpeech:
     def _default_config(self) -> Dict[str, Any]:
         return {
             'speech': {
-                'engine': 'pyttsx3',
+                'engine': 'hume',
                 'voice': {
                     'rate': 200,
                     'volume': 0.9,
-                    'voice_id': None
+                    'voice_id': 'ito'
+                }
+            },
+            'hume': {
+                'api_key': None,
+                'base_url': 'https://api.hume.ai/v0',
+                'tts': {
+                    'format': 'mp3',
+                    'instant_mode': True,
+                    'num_generations': 1,
+                    'speed': 1.0,
+                    'voice_description': None
                 }
             }
         }
     
-    def _initialize_engine(self):
+    def _initialize_engines(self):
+        engine_type = self.config.get('speech', {}).get('engine', 'hume')
+        
+        if engine_type == 'hume':
+            self._initialize_hume()
+        else:
+            self._initialize_pyttsx3()
+    
+    def _initialize_pyttsx3(self):
         try:
-            self.engine = pyttsx3.init()
-            self._configure_voice()
-            logging.info("Text-to-speech engine initialized successfully")
+            import pyttsx3
+            self.pyttsx3_engine = pyttsx3.init()
+            self._configure_pyttsx3_voice()
+            logging.info("pyttsx3 TTS engine initialized successfully")
         except Exception as e:
-            logging.error(f"Failed to initialize TTS engine: {e}")
+            logging.error(f"Failed to initialize pyttsx3 TTS engine: {e}")
             raise
     
-    def _configure_voice(self):
-        if not self.engine:
+    def _initialize_hume(self):
+        try:
+            api_key = os.environ.get('HUME_API_KEY') or self.config.get('hume', {}).get('api_key')
+            if not api_key:
+                raise ValueError("HUME_API_KEY not found in environment or config")
+            
+            self.hume_client = HumeClient(api_key=api_key)
+            
+            # Initialize pygame mixer for audio playback
+            pygame.mixer.init()
+            
+            logging.info("Hume TTS client initialized successfully")
+        except Exception as e:
+            logging.error(f"Failed to initialize Hume TTS client: {e}")
+            # Fall back to pyttsx3
+            logging.info("Falling back to pyttsx3...")
+            self.config['speech']['engine'] = 'pyttsx3'
+            self._initialize_pyttsx3()
+    
+    def _configure_pyttsx3_voice(self):
+        if not self.pyttsx3_engine:
             return
             
         voice_config = self.config['speech']['voice']
         
         # Set rate (speed)
-        self.engine.setProperty('rate', voice_config['rate'])
+        self.pyttsx3_engine.setProperty('rate', voice_config['rate'])
         
         # Set volume
-        self.engine.setProperty('volume', voice_config['volume'])
+        self.pyttsx3_engine.setProperty('volume', voice_config['volume'])
         
         # Set voice if specified
         if voice_config.get('voice_id'):
-            voices = self.engine.getProperty('voices')
+            voices = self.pyttsx3_engine.getProperty('voices')
             for voice in voices:
                 if voice_config['voice_id'] in voice.id:
-                    self.engine.setProperty('voice', voice.id)
+                    self.pyttsx3_engine.setProperty('voice', voice.id)
                     break
     
     def speak(self, text: str) -> bool:
-        if not self.engine:
-            logging.error("TTS engine not initialized")
+        engine_type = self.config.get('speech', {}).get('engine', 'hume')
+        
+        if engine_type == 'hume' and self.hume_client:
+            return self._speak_with_hume(text)
+        elif engine_type == 'pyttsx3' and self.pyttsx3_engine:
+            return self._speak_with_pyttsx3(text)
+        else:
+            logging.error("No TTS engine available")
+            return False
+    
+    def _speak_with_hume(self, text: str) -> bool:
+        try:
+            from hume.tts import PostedUtterance, PostedContextWithUtterances
+            from hume.tts import FormatMp3, FormatWav
+            
+            voice_config = self.config['speech']['voice']
+            hume_config = self.config['hume']['tts']
+            
+            # Prepare the utterance
+            voice_id = voice_config.get('voice_id', 'ito')
+            voice_description = hume_config.get('voice_description')
+            
+            # Create utterance with proper voice description
+            if voice_description:
+                description = f"{voice_description} using {voice_id} voice"
+            else:
+                description = f"Natural conversational tone using {voice_id} voice"
+            
+            utterance = PostedUtterance(
+                text=text,
+                description=description
+            )
+            
+            # Determine format
+            format_type = hume_config.get('format', 'mp3').lower()
+            if format_type == 'wav':
+                audio_format = FormatWav()
+            else:
+                audio_format = FormatMp3()
+            
+            # Use Hume SDK to synthesize speech
+            response = self.hume_client.tts.synthesize_json(
+                utterances=[utterance],
+                format=audio_format,
+                num_generations=hume_config.get('num_generations', 1)
+            )
+            
+            # Extract audio data
+            if response.generations and len(response.generations) > 0:
+                audio_b64 = response.generations[0].audio
+                audio_bytes = base64.b64decode(audio_b64)
+                
+                # Play audio using pygame
+                self._play_audio_bytes(audio_bytes)
+                
+                logging.info(f"Hume TTS spoke: {text[:50]}...")
+                return True
+            else:
+                logging.error("No audio generated by Hume TTS")
+                return False
+                
+        except Exception as e:
+            logging.error(f"Error with Hume TTS: {e}")
+            return False
+    
+    def _speak_with_pyttsx3(self, text: str) -> bool:
+        if not self.pyttsx3_engine:
+            logging.error("pyttsx3 engine not initialized")
             return False
             
         try:
-            self.engine.say(text)
-            self.engine.runAndWait()
-            logging.info(f"Spoke: {text[:50]}...")
+            self.pyttsx3_engine.say(text)
+            self.pyttsx3_engine.runAndWait()
+            logging.info(f"pyttsx3 spoke: {text[:50]}...")
             return True
         except Exception as e:
-            logging.error(f"Error speaking text: {e}")
+            logging.error(f"Error with pyttsx3: {e}")
             return False
     
-    def get_available_voices(self) -> list:
-        if not self.engine:
-            return []
+    def _play_audio_bytes(self, audio_bytes: bytes):
+        """Play audio bytes using pygame"""
+        try:
+            # Create a BytesIO object from the audio bytes
+            audio_buffer = io.BytesIO(audio_bytes)
             
-        voices = self.engine.getProperty('voices')
-        return [{"id": voice.id, "name": voice.name} for voice in voices]
+            # Load and play the audio
+            pygame.mixer.music.load(audio_buffer)
+            pygame.mixer.music.play()
+            
+            # Wait for playback to complete
+            while pygame.mixer.music.get_busy():
+                pygame.time.Clock().tick(10)
+                
+        except Exception as e:
+            logging.error(f"Error playing audio: {e}")
+            raise
+    
+    def get_available_voices(self) -> list:
+        engine_type = self.config.get('speech', {}).get('engine', 'hume')
+        
+        if engine_type == 'hume':
+            # Return common Hume voices (this could be expanded with API call)
+            return [
+                {"id": "ito", "name": "Ito - Conversational"},
+                {"id": "dacher", "name": "Dacher - Warm and approachable"},
+                {"id": "aiden", "name": "Aiden - Confident and clear"},
+                {"id": "dorothy", "name": "Dorothy - Friendly and engaging"}
+            ]
+        elif self.pyttsx3_engine:
+            voices = self.pyttsx3_engine.getProperty('voices')
+            return [{"id": voice.id, "name": voice.name} for voice in voices]
+        else:
+            return []
     
     def set_voice_properties(self, rate: Optional[int] = None, 
                            volume: Optional[float] = None,
-                           voice_id: Optional[str] = None):
-        if not self.engine:
-            return False
-            
+                           voice_id: Optional[str] = None,
+                           voice_description: Optional[str] = None) -> bool:
         try:
-            if rate is not None:
-                self.engine.setProperty('rate', rate)
-                self.config['speech']['voice']['rate'] = rate
+            engine_type = self.config.get('speech', {}).get('engine', 'hume')
+            
+            if engine_type == 'hume':
+                # Update Hume-specific settings
+                if voice_id is not None:
+                    self.config['speech']['voice']['voice_id'] = voice_id
+                if voice_description is not None:
+                    self.config['hume']['tts']['voice_description'] = voice_description
+                return True
                 
-            if volume is not None:
-                self.engine.setProperty('volume', volume)
-                self.config['speech']['voice']['volume'] = volume
+            elif engine_type == 'pyttsx3' and self.pyttsx3_engine:
+                # Update pyttsx3 settings
+                if rate is not None:
+                    self.pyttsx3_engine.setProperty('rate', rate)
+                    self.config['speech']['voice']['rate'] = rate
+                    
+                if volume is not None:
+                    self.pyttsx3_engine.setProperty('volume', volume)
+                    self.config['speech']['voice']['volume'] = volume
+                    
+                if voice_id is not None:
+                    self.pyttsx3_engine.setProperty('voice', voice_id)
+                    self.config['speech']['voice']['voice_id'] = voice_id
+                    
+                return True
+            else:
+                return False
                 
-            if voice_id is not None:
-                self.engine.setProperty('voice', voice_id)
-                self.config['speech']['voice']['voice_id'] = voice_id
-                
-            return True
         except Exception as e:
             logging.error(f"Error setting voice properties: {e}")
             return False
+    
+    def get_engine_info(self) -> Dict[str, Any]:
+        """Get information about the current TTS engine"""
+        engine_type = self.config.get('speech', {}).get('engine', 'hume')
+        
+        return {
+            'engine': engine_type,
+            'available': self.hume_client is not None if engine_type == 'hume' else self.pyttsx3_engine is not None,
+            'voice_id': self.config['speech']['voice'].get('voice_id'),
+            'hume_available': self.hume_client is not None,
+            'pyttsx3_available': self.pyttsx3_engine is not None
+        }
