@@ -1,8 +1,10 @@
 from flask import Flask, request
 from flask_restx import Api, Resource, fields
+from flask_restx.inputs import regex
 import logging
 import yaml
 from corpus_speech import TextToSpeech
+from marshmallow import validate
 
 app = Flask(__name__)
 api = Api(app, 
@@ -27,27 +29,49 @@ speak_model = api.model('SpeakRequest', {
 })
 
 config_model = api.model('ConfigRequest', {
-    'rate': fields.Integer(description='Speech rate in words per minute', example=200),
-    'volume': fields.Float(description='Volume level between 0.0 and 1.0', example=0.9),
-    'voice_id': fields.String(description='Voice ID to use', example='ito'),
-    'voice_description': fields.String(description='Custom voice description for Hume TTS', example='Warm, conversational tone')
+    'rate': fields.Integer(description='Speech rate in words per minute', example=200, 
+                          enum=[150, 175, 200, 225, 250, 275, 300]),
+    'volume': fields.Float(description='Volume level', example=0.9,
+                          enum=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]),
+    'voice_id': fields.String(description='Voice ID to use', example='ito',
+                             enum=['ito', 'dacher', 'aiden', 'dorothy']),
+    'voice_description': fields.String(description='Custom voice description for Hume TTS', example='Warm, conversational tone',
+                                      enum=['Warm, conversational tone', 'Energetic and enthusiastic voice', 'Calm and thoughtful delivery',
+                                           'Curious and questioning tone', 'Confident and clear speech', 'Friendly and approachable manner'])
 })
 
+# Define voice choices
+VOICE_CHOICES = ['ito', 'dacher', 'aiden', 'dorothy']
+SPEED_CHOICES = [0.5, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.5, 1.7, 2.0]
+EMOTION_CHOICES = ['calm', 'excited', 'curious', 'observant', 'friendly', 'enthusiastic', 'confident', 'warm', 'energetic', 'thoughtful']
+ENGINE_CHOICES = ['hume', 'pyttsx3']
+
 voice_model = api.model('VoiceRequest', {
-    'voice_id': fields.String(required=True, description='Voice ID to set', example='ito')
+    'voice_id': fields.String(required=True, description='Voice ID to set', 
+                             example='ito', enum=VOICE_CHOICES)
 })
 
 speed_model = api.model('SpeedRequest', {
-    'speed': fields.Float(required=True, description='Speech speed multiplier (0.5-2.0)', example=1.0)
+    'speed': fields.Float(required=True, description='Speech speed multiplier', example=1.0,
+                         enum=SPEED_CHOICES)
 })
 
+DESCRIPTION_CHOICES = [
+    'Warm, conversational tone', 'Energetic and enthusiastic voice', 'Calm and thoughtful delivery',
+    'Curious and questioning tone', 'Confident and clear speech', 'Friendly and approachable manner',
+    'Excited with clear emotion', 'Observant and descriptive style', 'Professional and articulate',
+    'Casual and relaxed delivery'
+]
+
 emotion_model = api.model('EmotionRequest', {
-    'emotion': fields.String(required=True, description='Emotional context for speech', example='calm'),
-    'description': fields.String(description='Detailed voice description', example='Warm, friendly tone with slight excitement')
+    'emotion': fields.String(required=True, description='Emotional context for speech', example='calm',
+                            enum=EMOTION_CHOICES),
+    'description': fields.String(description='Detailed voice description', example='Warm, conversational tone',
+                                enum=DESCRIPTION_CHOICES)
 })
 
 engine_model = api.model('EngineRequest', {
-    'engine': fields.String(required=True, description='TTS engine to use', example='hume', enum=['hume', 'pyttsx3'])
+    'engine': fields.String(required=True, description='TTS engine to use', example='hume', enum=ENGINE_CHOICES)
 })
 
 success_response = api.model('SuccessResponse', {
@@ -142,7 +166,9 @@ class Voices(Resource):
 
 @api.route('/voice')
 class Voice(Resource):
-    @api.expect(voice_model)
+    @api.doc(params={
+        'voice_id': {'description': 'Voice ID to set', 'enum': VOICE_CHOICES, 'required': True}
+    })
     @api.response(200, 'Success', success_response)
     @api.response(400, 'Bad Request', error_response)
     @api.response(500, 'Internal Server Error', error_response)
@@ -151,11 +177,13 @@ class Voice(Resource):
         if not tts:
             return {"error": "TTS not initialized"}, 500
         
-        data = request.get_json()
-        if not data or 'voice_id' not in data:
-            return {"error": "Missing 'voice_id' field"}, 400
+        voice_id = request.args.get('voice_id')
+        if not voice_id:
+            return {"error": "Missing 'voice_id' parameter"}, 400
         
-        voice_id = data['voice_id']
+        if voice_id not in VOICE_CHOICES:
+            return {"error": f"Invalid voice. Choose from: {VOICE_CHOICES}"}, 400
+        
         success = tts.set_voice_properties(voice_id=voice_id)
         
         if success:
@@ -165,7 +193,9 @@ class Voice(Resource):
 
 @api.route('/speed')
 class Speed(Resource):
-    @api.expect(speed_model)
+    @api.doc(params={
+        'speed': {'description': 'Speech speed multiplier', 'enum': SPEED_CHOICES, 'required': True, 'type': 'number'}
+    })
     @api.response(200, 'Success', success_response)
     @api.response(400, 'Bad Request', error_response)
     @api.response(500, 'Internal Server Error', error_response)
@@ -174,13 +204,17 @@ class Speed(Resource):
         if not tts:
             return {"error": "TTS not initialized"}, 500
         
-        data = request.get_json()
-        if not data or 'speed' not in data:
-            return {"error": "Missing 'speed' field"}, 400
+        speed_str = request.args.get('speed')
+        if not speed_str:
+            return {"error": "Missing 'speed' parameter"}, 400
         
-        speed = data['speed']
-        if speed < 0.5 or speed > 2.0:
-            return {"error": "Speed must be between 0.5 and 2.0"}, 400
+        try:
+            speed = float(speed_str)
+        except ValueError:
+            return {"error": "Speed must be a valid number"}, 400
+        
+        if speed not in SPEED_CHOICES:
+            return {"error": f"Invalid speed. Choose from: {SPEED_CHOICES}"}, 400
         
         # For Hume, speed is handled differently than pyttsx3 rate
         if hasattr(tts, 'config') and tts.config.get('speech', {}).get('engine') == 'hume':
@@ -197,7 +231,10 @@ class Speed(Resource):
 
 @api.route('/emotion')
 class Emotion(Resource):
-    @api.expect(emotion_model)
+    @api.doc(params={
+        'emotion': {'description': 'Emotional context for speech', 'enum': EMOTION_CHOICES, 'required': True},
+        'description': {'description': 'Voice description style', 'enum': DESCRIPTION_CHOICES, 'required': False}
+    })
     @api.response(200, 'Success', success_response)
     @api.response(400, 'Bad Request', error_response)
     @api.response(500, 'Internal Server Error', error_response)
@@ -206,23 +243,27 @@ class Emotion(Resource):
         if not tts:
             return {"error": "TTS not initialized"}, 500
         
-        data = request.get_json()
-        if not data or 'emotion' not in data:
-            return {"error": "Missing 'emotion' field"}, 400
+        emotion = request.args.get('emotion')
+        if not emotion:
+            return {"error": "Missing 'emotion' parameter"}, 400
         
-        emotion = data['emotion']
-        description = data.get('description', f"Natural {emotion} tone")
+        if emotion not in EMOTION_CHOICES:
+            return {"error": f"Invalid emotion. Choose from: {EMOTION_CHOICES}"}, 400
+        
+        description = request.args.get('description', f"Natural {emotion} tone")
         
         success = tts.set_voice_properties(voice_description=description)
         
         if success:
-            return {"status": "success", "message": f"Emotion set to {emotion}"}
+            return {"status": "success", "message": f"Emotion set to {emotion} with description: {description}"}
         else:
             return {"error": f"Failed to set emotion to {emotion}"}, 500
 
 @api.route('/engine')
 class Engine(Resource):
-    @api.expect(engine_model)
+    @api.doc(params={
+        'engine': {'description': 'TTS engine to use', 'enum': ENGINE_CHOICES, 'required': True}
+    })
     @api.response(200, 'Success', success_response)
     @api.response(400, 'Bad Request', error_response)
     @api.response(500, 'Internal Server Error', error_response)
@@ -231,13 +272,12 @@ class Engine(Resource):
         if not tts:
             return {"error": "TTS not initialized"}, 500
         
-        data = request.get_json()
-        if not data or 'engine' not in data:
-            return {"error": "Missing 'engine' field"}, 400
+        engine = request.args.get('engine')
+        if not engine:
+            return {"error": "Missing 'engine' parameter"}, 400
         
-        engine = data['engine']
-        if engine not in ['hume', 'pyttsx3']:
-            return {"error": "Engine must be 'hume' or 'pyttsx3'"}, 400
+        if engine not in ENGINE_CHOICES:
+            return {"error": f"Invalid engine. Choose from: {ENGINE_CHOICES}"}, 400
         
         tts.config['speech']['engine'] = engine
         
