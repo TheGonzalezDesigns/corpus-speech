@@ -204,19 +204,67 @@ class TextToSpeech:
     def get_available_voices(self) -> list:
         engine_type = self.config.get('speech', {}).get('engine', 'hume')
         
-        if engine_type == 'hume':
-            # Return common Hume voices (this could be expanded with API call)
-            return [
-                {"id": "ito", "name": "Ito - Conversational"},
-                {"id": "dacher", "name": "Dacher - Warm and approachable"},
-                {"id": "aiden", "name": "Aiden - Confident and clear"},
-                {"id": "dorothy", "name": "Dorothy - Friendly and engaging"}
-            ]
+        if engine_type == 'hume' and self.hume_client:
+            try:
+                # Get voices from Hume API
+                response = self.hume_client.tts.voices.list(provider="HUME_AI")
+                voices = []
+                
+                # Handle paginated response
+                for voice in response:
+                    voices.append({
+                        "id": voice.id,
+                        "name": f"{voice.name or voice.id} - Hume Voice",
+                        "provider": voice.provider,
+                        "tags": voice.tags if hasattr(voice, 'tags') else {}
+                    })
+                
+                logging.info(f"Retrieved {len(voices)} voices from Hume API")
+                return voices
+                
+            except Exception as e:
+                logging.error(f"Failed to get Hume voices: {e}")
+                # Fall back to hardcoded common voices
+                return [
+                    {"id": "ito", "name": "Ito - Conversational", "provider": "hume"},
+                    {"id": "dacher", "name": "Dacher - Warm and approachable", "provider": "hume"},
+                    {"id": "aiden", "name": "Aiden - Confident and clear", "provider": "hume"},
+                    {"id": "dorothy", "name": "Dorothy - Friendly and engaging", "provider": "hume"}
+                ]
+                
         elif self.pyttsx3_engine:
             voices = self.pyttsx3_engine.getProperty('voices')
-            return [{"id": voice.id, "name": voice.name} for voice in voices]
+            return [{"id": voice.id, "name": voice.name, "provider": "pyttsx3"} for voice in voices]
         else:
             return []
+    
+    def get_voice_id_by_name(self, voice_name: str) -> Optional[str]:
+        """Get voice ID by friendly name"""
+        voices = self.get_available_voices()
+        
+        # Try exact name match first
+        for voice in voices:
+            if voice['name'].lower() == voice_name.lower():
+                return voice['id']
+        
+        # Try partial name match (e.g. "ito" matches "Ito - Hume Voice")
+        voice_name_lower = voice_name.lower()
+        for voice in voices:
+            voice_name_clean = voice['name'].split(' -')[0].lower()  # Get just the name part
+            if voice_name_clean == voice_name_lower:
+                return voice['id']
+        
+        # Try contains match
+        for voice in voices:
+            if voice_name_lower in voice['name'].lower():
+                return voice['id']
+        
+        return None
+    
+    def get_voice_name_choices(self) -> list:
+        """Get list of voice names for dropdown choices"""
+        voices = self.get_available_voices()
+        return [voice['name'].split(' -')[0] for voice in voices]  # Just the name part, not "- Hume Voice"
     
     def set_voice_properties(self, rate: Optional[int] = None, 
                            volume: Optional[float] = None,

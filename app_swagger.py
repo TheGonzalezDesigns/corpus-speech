@@ -40,15 +40,25 @@ config_model = api.model('ConfigRequest', {
                                            'Curious and questioning tone', 'Confident and clear speech', 'Friendly and approachable manner'])
 })
 
-# Define voice choices
-VOICE_CHOICES = ['ito', 'dacher', 'aiden', 'dorothy']
+# Define voice choices - will be populated dynamically
+VOICE_CHOICES = ['ito', 'dacher', 'aiden', 'dorothy']  # fallback
+
+# Get actual voice names from TTS system if available
+try:
+    if tts:
+        VOICE_CHOICES = tts.get_voice_name_choices()
+        logging.info(f"Loaded {len(VOICE_CHOICES)} voice names for Swagger dropdown")
+except Exception as e:
+    logging.warning(f"Could not load dynamic voice names for dropdown: {e}")
+    VOICE_CHOICES = ['Ito', 'Dacher', 'Aiden', 'Dorothy']  # fallback names
+    logging.info("Using fallback voice names")
 SPEED_CHOICES = [0.5, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.5, 1.7, 2.0]
 EMOTION_CHOICES = ['calm', 'excited', 'curious', 'observant', 'friendly', 'enthusiastic', 'confident', 'warm', 'energetic', 'thoughtful']
 ENGINE_CHOICES = ['hume', 'pyttsx3']
 
 voice_model = api.model('VoiceRequest', {
-    'voice_id': fields.String(required=True, description='Voice ID to set', 
-                             example='ito', enum=VOICE_CHOICES)
+    'voice_name': fields.String(required=True, description='Voice name to set', 
+                               example='Ito', enum=VOICE_CHOICES)
 })
 
 speed_model = api.model('SpeedRequest', {
@@ -167,29 +177,32 @@ class Voices(Resource):
 @api.route('/voice')
 class Voice(Resource):
     @api.doc(params={
-        'voice_id': {'description': 'Voice ID to set', 'enum': VOICE_CHOICES, 'required': True}
+        'voice_name': {'description': 'Voice name to set', 'enum': VOICE_CHOICES, 'required': True}
     })
     @api.response(200, 'Success', success_response)
     @api.response(400, 'Bad Request', error_response)
     @api.response(500, 'Internal Server Error', error_response)
     def post(self):
-        """Set the active voice for speech synthesis"""
+        """Set the active voice for speech synthesis by friendly name"""
         if not tts:
             return {"error": "TTS not initialized"}, 500
         
-        voice_id = request.args.get('voice_id')
-        if not voice_id:
-            return {"error": "Missing 'voice_id' parameter"}, 400
+        voice_name = request.args.get('voice_name')
+        if not voice_name:
+            return {"error": "Missing 'voice_name' parameter"}, 400
         
-        if voice_id not in VOICE_CHOICES:
-            return {"error": f"Invalid voice. Choose from: {VOICE_CHOICES}"}, 400
+        # Convert voice name to ID
+        voice_id = tts.get_voice_id_by_name(voice_name)
+        if not voice_id:
+            available_names = tts.get_voice_name_choices()
+            return {"error": f"Voice '{voice_name}' not found. Available voices: {available_names[:10]}..."}, 400
         
         success = tts.set_voice_properties(voice_id=voice_id)
         
         if success:
-            return {"status": "success", "message": f"Voice set to {voice_id}"}
+            return {"status": "success", "message": f"Voice set to {voice_name} (ID: {voice_id[:8]}...)"}
         else:
-            return {"error": f"Failed to set voice to {voice_id}"}, 500
+            return {"error": f"Failed to set voice to {voice_name}"}, 500
 
 @api.route('/speed')
 class Speed(Resource):
