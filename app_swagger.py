@@ -322,6 +322,37 @@ class Info(Resource):
             "available_voices": tts.get_available_voices()
         }
 
+@api.route('/current')
+class Current(Resource):
+    @api.response(200, 'Success')
+    @api.response(500, 'Internal Server Error', error_response)
+    def get(self):
+        """Get current voice settings in user-friendly format"""
+        if not tts:
+            return {"error": "TTS not initialized"}, 500
+        
+        # Get current voice ID and find its name
+        current_voice_id = tts.config['speech']['voice'].get('voice_id')
+        current_voice_name = "Unknown"
+        
+        if current_voice_id:
+            voices = tts.get_available_voices()
+            for voice in voices:
+                if voice['id'] == current_voice_id:
+                    current_voice_name = voice['name'].split(' -')[0]  # Just the name part
+                    break
+        
+        return {
+            "engine": tts.config['speech']['engine'],
+            "voice": {
+                "name": current_voice_name,
+                "id": current_voice_id[:8] + "..." if current_voice_id else None
+            },
+            "speed": tts.config.get('hume', {}).get('tts', {}).get('speed', 1.0),
+            "format": tts.config.get('hume', {}).get('tts', {}).get('format', 'mp3'),
+            "emotion_description": tts.config.get('hume', {}).get('tts', {}).get('voice_description', None)
+        }
+
 if __name__ == '__main__':
     # Load config for server settings
     try:

@@ -117,24 +117,25 @@ class TextToSpeech:
     def _speak_with_hume(self, text: str) -> bool:
         try:
             from hume.tts import PostedUtterance, PostedContextWithUtterances
-            from hume.tts import FormatMp3, FormatWav
+            from hume.tts import FormatMp3, FormatWav, PostedUtteranceVoiceWithId
             
             voice_config = self.config['speech']['voice']
             hume_config = self.config['hume']['tts']
             
-            # Prepare the utterance
+            # Prepare the utterance with proper voice specification
             voice_id = voice_config.get('voice_id', 'ito')
             voice_description = hume_config.get('voice_description')
             
-            # Create utterance with proper voice description
-            if voice_description:
-                description = f"{voice_description} using {voice_id} voice"
-            else:
-                description = f"Natural conversational tone using {voice_id} voice"
+            # Create voice object with ID
+            voice_obj = PostedUtteranceVoiceWithId(id=voice_id)
+            
+            # Create utterance with voice object and description
+            description = voice_description or "Natural conversational tone"
             
             utterance = PostedUtterance(
                 text=text,
-                description=description
+                description=description,
+                voice=voice_obj
             )
             
             # Determine format
