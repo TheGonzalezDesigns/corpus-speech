@@ -1,3 +1,35 @@
+# THEORY:
+# This module represents the "voice" capability of the Corpus AI companion,
+# implementing advanced emotional speech synthesis through Hume's TTS technology.
+# It embodies the "emotional intelligence" principle, where the AI companion
+# doesn't just speak words, but conveys genuine emotion and personality.
+#
+# The module bridges the gap between text-based AI understanding and natural
+# human communication, supporting both simple pyttsx3 fallback and sophisticated
+# Hume TTS with 101+ voice personalities. It handles the complex voice selection,
+# emotional context, and audio playback pipeline needed for authentic AI speech.
+#
+# Key Innovations:
+# - Dual-engine support (Hume TTS + pyttsx3 fallback)
+# - Dynamic voice selection from 101+ Hume personalities
+# - Emotional context integration for natural speech delivery
+# - Pygame audio pipeline for reliable playback
+# - Voice name-to-UUID mapping for user-friendly configuration
+#
+# This module transforms the AI companion from a silent observer into an
+# emotionally expressive communication partner with genuine personality.
+
+# CAVEATS & WARNINGS:
+# - Hume API key required in environment (HUME_API_KEY) - fails without it
+# - Voice UUID mapping requires internet access to fetch voice list (101 API calls on startup)
+# - Pygame audio may conflict with other audio applications
+# - No audio device selection (uses system default)
+# - Hume TTS has rate limits (100 requests/minute) - no local rate limiting implemented
+# - Voice configuration changes require service restart (no live reconfiguration)
+# - Base64 audio decoding keeps full audio in memory (potential memory leak)
+# - No voice sample preview before selection
+# - Error handling falls back to pyttsx3 but doesn't notify user of degraded mode
+
 import os
 import yaml
 import logging
