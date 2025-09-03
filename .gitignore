@@ -61,4 +61,4 @@ Thumbs.db
 
 # Logs
 *.log
-logs/
+logs/.voice_cache.json
