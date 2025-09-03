@@ -39,6 +39,8 @@ import pygame
 import requests
 from typing import Optional, Dict, Any
 from hume.client import HumeClient
+import json
+from pathlib import Path
 
 class TextToSpeech:
     def __init__(self, config_path: str = "config.yaml"):
@@ -239,19 +241,31 @@ class TextToSpeech:
         
         if engine_type == 'hume' and self.hume_client:
             try:
+                # Try cached voice list first
+                cache_path = Path(__file__).parent / ".voice_cache.json"
+                if cache_path.exists():
+                    try:
+                        cache = json.loads(cache_path.read_text(encoding='utf-8'))
+                        if isinstance(cache, dict) and 'voices' in cache:
+                            return cache['voices']
+                    except Exception:
+                        pass
+
                 # Get voices from Hume API
                 response = self.hume_client.tts.voices.list(provider="HUME_AI")
                 voices = []
-                
-                # Handle paginated response
                 for voice in response:
                     voices.append({
                         "id": voice.id,
                         "name": f"{voice.name or voice.id} - Hume Voice",
-                        "provider": voice.provider,
-                        "tags": voice.tags if hasattr(voice, 'tags') else {}
+                        "provider": getattr(voice, 'provider', 'hume'),
+                        "tags": getattr(voice, 'tags', {})
                     })
-                
+                # Cache for future use
+                try:
+                    cache_path.write_text(json.dumps({"voices": voices}, ensure_ascii=False), encoding='utf-8')
+                except Exception:
+                    pass
                 logging.info(f"Retrieved {len(voices)} voices from Hume API")
                 return voices
                 
