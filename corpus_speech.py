@@ -200,17 +200,33 @@ class TextToSpeech:
                 
         except Exception as e:
             logging.error(f"Error with Hume TTS: {e}")
-            # Runtime fallback to pyttsx3 on failure (quota/keys/issues)
-            try:
-                if self.config.get('speech', {}).get('engine') != 'pyttsx3':
-                    logging.warning("Falling back to pyttsx3 due to Hume failure")
-                    self.config['speech']['engine'] = 'pyttsx3'
-                    if not self.pyttsx3_engine:
-                        self._initialize_pyttsx3()
+            # Runtime fallback to configured engine
+            return self._fallback_speak(text, reason=str(e))
+
+    def _fallback_speak(self, text: str, reason: str = "") -> bool:
+        """Fallback speak path using a configured backup engine.
+        Defaults to pyttsx3 today, but allows swapping in the future.
+        """
+        fallback = (
+            self.config.get('speech', {}).get('fallback_engine')
+            or os.environ.get('SPEECH_FALLBACK_ENGINE')
+            or 'pyttsx3'
+        )
+        try:
+            current = self.config.get('speech', {}).get('engine')
+            if current != fallback:
+                logging.warning(f"Falling back to {fallback} due to primary TTS failure: {reason}")
+                self.config['speech']['engine'] = fallback
+            if fallback == 'pyttsx3':
+                if not self.pyttsx3_engine:
+                    self._initialize_pyttsx3()
                 return self._speak_with_pyttsx3(text)
-            except Exception as fe:
-                logging.error(f"Fallback to pyttsx3 failed: {fe}")
+            else:
+                logging.error(f"Fallback engine '{fallback}' not supported; please configure a valid engine")
                 return False
+        except Exception as fe:
+            logging.error(f"Fallback speak failed: {fe}")
+            return False
     
     def _speak_with_pyttsx3(self, text: str) -> bool:
         if not self.pyttsx3_engine:
